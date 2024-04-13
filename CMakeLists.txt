@@ -1,4 +1,4 @@
-cmake_minimum_required( VERSION 3.5.1)
+cmake_minimum_required( VERSION 3.10)
 
 message(STATUS "CMAKE version ${CMAKE_VERSION}")
 
@@ -27,7 +27,7 @@ project(fmm)
 
 set(CMAKE_BUILD_TYPE "Release")
 set(CMAKE_CXX_FLAGS "-O3 -DSPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE")
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/build")
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
@@ -73,6 +73,16 @@ if(OPENMP_FOUND)
   message(STATUS "OpenMP_CXX_LIBRARIES found at ${OpenMP_CXX_LIBRARIES}")
 endif()
 link_libraries(${OpenMP_CXX_LIBRARIES})
+
+# parquet support
+find_package(Arrow REQUIRED)
+find_package(Parquet REQUIRED)
+include_directories(${ARROW_INCLUDE_DIR})
+include_directories(${PARQUET_INCLUDE_PATH})
+#message(FATAL_ERROR "Arrow hdr dir: ${ARROW_INCLUDE_DIR}")
+link_libraries(${ARROW_SHARED_LIB})
+link_libraries(${PARQUET_SHARED_LIB})
+
 
 ### Set RPATH properties
 
@@ -139,6 +149,8 @@ add_library(FMMLIB SHARED
 
 add_executable(fmm src/app/fmm.cpp)
 target_link_libraries(fmm FMMLIB)
+target_include_directories(fmm PUBLIC ${Arrow_INCLUDE_DIRS})
+target_include_directories(fmm PUBLIC ${Parquet_INCLUDE_DIRS})
 
 add_executable(ubodt_gen src/app/ubodt_gen_app.cpp)
 target_link_libraries(ubodt_gen FMMLIB)

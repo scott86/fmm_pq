@@ -17,6 +17,8 @@
 #include <fstream>
 #include <string>
 
+#include <arrow/api.h>
+
 namespace FMM {
 /**
  * Classes related with input and output

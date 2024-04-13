@@ -14,6 +14,10 @@
 
 #include <boost/format.hpp>
 
+#include "arrow/io/api.h"
+#include <arrow/filesystem/api.h>
+#include "parquet/arrow/reader.h"
+
 using namespace FMM;
 using namespace FMM::CORE;
 using namespace FMM::IO;
@@ -330,6 +334,192 @@ void CSVPointReader::close() {
 bool CSVPointReader::has_timestamp() {
   return timestamp_idx > 0;
 }
+
+
+arrow::Result<std::unique_ptr<parquet::arrow::FileReader>> OpenReader(const std::string &e_filename) {
+  arrow::fs::LocalFileSystem file_system;
+  ARROW_ASSIGN_OR_RAISE(auto input, file_system.OpenInputFile(e_filename));
+
+  parquet::ArrowReaderProperties arrow_reader_properties =
+      parquet::default_arrow_reader_properties();
+
+  arrow_reader_properties.set_pre_buffer(true);
+  arrow_reader_properties.set_use_threads(true);
+
+  parquet::ReaderProperties reader_properties =
+      parquet::default_reader_properties();
+
+  // Open Parquet file reader
+  std::unique_ptr<parquet::arrow::FileReader> arrow_reader;
+  auto reader_builder = parquet::arrow::FileReaderBuilder();
+  reader_builder.properties(arrow_reader_properties);
+  ARROW_RETURN_NOT_OK(reader_builder.Open(std::move(input), reader_properties));
+  ARROW_RETURN_NOT_OK(reader_builder.Build(&arrow_reader));
+
+  return arrow_reader;
+}
+
+
+ParquetReader::ParquetReader(const std::string &e_filename) {
+
+  // open file for reading
+  init(e_filename);
+
+  // initialize some stuff
+  idx = 0;
+  n = table->num_rows();
+  curTripId = -1;
+
+  // get timestamp column deets
+  timestampIdx      = 0;
+  timestamp_col     = table->column(0);
+  timestampChunks   = timestamp_col->num_chunks();
+  curTimestampChunk = 0;
+  timestamp_chunk   = std::dynamic_pointer_cast<arrow::DoubleArray>(timestamp_col->chunk(0));
+
+  // get lon column deets
+  lonIdx      = 0;
+  lon_col     = table->column(1);
+  lonChunks   = lon_col->num_chunks();
+  curLonChunk = 0;
+  lon_chunk   = std::dynamic_pointer_cast<arrow::DoubleArray>(lon_col->chunk(0));
+
+  // get lat column deets
+  latIdx      = 0;
+  lat_col     = table->column(2);
+  latChunks   = lat_col->num_chunks();
+  curLatChunk = 0;
+  lat_chunk   = std::dynamic_pointer_cast<arrow::DoubleArray>(lat_col->chunk(0));
+
+  // get trip column deets
+  tripIdx      = 0;
+  trip_col     = table->column(3);
+  tripChunks   = trip_col->num_chunks();
+  curTripChunk = 0;
+  trip_chunk   = std::dynamic_pointer_cast<arrow::Int64Array>(trip_col->chunk(0));
+}
+
+arrow::Status ParquetReader::init(const std::string &e_filename) {
+  ARROW_ASSIGN_OR_RAISE(auto arrow_reader, OpenReader(e_filename));
+  ARROW_RETURN_NOT_OK(arrow_reader->ReadTable(&table));
+  return arrow::Status::OK();
+}
+
+// return current row and advance indicies to next spot
+TripsRow ParquetReader::getCurrentRow() {
+
+  // assemble current row
+  //int agent     = agent_chunk->Value(agentIdx);
+  double t      = static_cast<double>(timestamp_chunk->Value(timestampIdx)) / 1000.0; // millis -> seconds
+  double lat    = lat_chunk->Value(latIdx);
+  double lon    = lon_chunk->Value(lonIdx);
+  int trip      = trip_chunk->Value(tripIdx);
+
+  return TripsRow{t, lat, lon, trip};
+}
+
+// advance indicies
+void ParquetReader::nextRow() {
+
+  // advance master index
+  idx = idx + 1;
+
+  // don't bother continuing if we're at the end
+  if(idx >= n) { return; }
+
+  // advance each column
+  nextTimestamp();
+  nextLon();
+  nextLat();
+  nextTrip();
+}
+
+void ParquetReader::nextTimestamp() {
+  timestampIdx = timestampIdx + 1;
+  if(timestampIdx >= timestamp_chunk->length()) {
+    // advance to next chunk
+    timestampIdx = 0;
+    curTimestampChunk = curTimestampChunk + 1;
+    timestamp_chunk = std::dynamic_pointer_cast<arrow::DoubleArray>(timestamp_col->chunk(curTimestampChunk));
+  }
+}
+
+void ParquetReader::nextLon() {
+  lonIdx = lonIdx + 1;
+  if(lonIdx >= lon_chunk->length()) {
+    // advance to next chunk
+    lonIdx = 0;
+    curLonChunk = curLonChunk + 1;
+    lon_chunk = std::dynamic_pointer_cast<arrow::DoubleArray>(lon_col->chunk(curLonChunk));
+  }
+}
+
+void ParquetReader::nextLat() {
+  latIdx = latIdx + 1;
+  if(latIdx >= lat_chunk->length()) {
+    // advance to next chunk
+    latIdx = 0;
+    curLatChunk = curLatChunk + 1;
+    lat_chunk = std::dynamic_pointer_cast<arrow::DoubleArray>(lat_col->chunk(curLatChunk));
+  }
+}
+
+void ParquetReader::nextTrip() {
+  tripIdx = tripIdx + 1;
+  if(tripIdx >= trip_chunk->length()) {
+    // advance to next chunk
+    tripIdx = 0;
+    curTripChunk = curTripChunk + 1;
+    trip_chunk = std::dynamic_pointer_cast<arrow::Int64Array>(trip_col->chunk(curTripChunk));
+  }
+}
+
+bool ParquetReader::has_next_trajectory() {
+  return idx < n;
+}
+
+Trajectory ParquetReader::read_next_trajectory() {
+
+  // initialize some vars
+  FMM::CORE::LineString geom;
+  std::vector<double> timestamps;
+
+  // first leg
+  curTripId = trip_chunk->Value(tripIdx);
+  timestamps.push_back(timestamp_chunk->Value(timestampIdx));
+  double x = lon_chunk->Value(lonIdx);
+  double y = lat_chunk->Value(latIdx);
+  geom.add_point(x, y);
+
+  int curTripLength = 1;
+  
+  // read rows until there is a change in trip ID
+  while(has_next_trajectory()) {
+    TripsRow data = getCurrentRow();
+    nextRow();
+
+    // break if change in trip ID
+    if(curTripId != data.trip) { break; }
+
+    // append current row to trip geom
+    timestamps.push_back(data.timestamp);
+    geom.add_point(data.lon, data.lat);
+    curTripLength = curTripLength + 1;
+  }
+
+return Trajectory{curTripId, geom, timestamps};
+}
+
+// assume true for trips files
+bool ParquetReader::has_timestamp() {
+  return true;
+}
+
+// no resources to release?
+void ParquetReader::close() {
+}
+
+
 
 GPSReader::GPSReader(const FMM::CONFIG::GPSConfig &config) {
   mode = config.get_gps_format();
