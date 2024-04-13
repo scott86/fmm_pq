@@ -231,6 +231,139 @@ private:
 }; // CSVTemporalTrajectoryReader
 
 /**
+* Struct for representing a trips file row.
+*/
+struct TripsRow {
+
+  /**
+  * @param timestamp_arg timestamp (epoch seconds)
+  * @param lat_arg latitude
+  * @param lon_arg longitude
+  * @param trip_arg trip ID
+  */
+  TripsRow(double timestamp_arg, double lat_arg, double lon_arg, int trip_arg) :
+    timestamp(timestamp_arg), lat(lat_arg), lon(lon_arg), trip(trip_arg) {
+  };
+
+  double timestamp;
+  double lat;
+  double lon;
+  int trip;
+
+};
+
+/**
+ * Trajectory Reader class for parquet file.
+ *
+ * The file should be parquet format with the following columns:
+ * timestamp | lat | lon | trip
+ */
+class ParquetReader : public ITrajectoryReader {
+public:
+  
+  /**
+   *  Reader class for parquet data.
+   * @param e_filename file name
+   */
+  ParquetReader(
+    const std::string &e_filename);
+
+  /**
+   * Initialize reader.
+   * @param e_filename file name
+   */
+  arrow::Status init(const std::string &e_filename);  
+
+  /**
+   * Read the next trajectory in the file.
+   * @return A trajectory object
+   */
+  FMM::CORE::Trajectory read_next_trajectory() override;
+  
+  /**
+   * Check if the file still contains trajectory not read
+   * @return true if there is still any trajectory not read
+   */
+  bool has_next_trajectory() override;
+  
+  /**
+   * Check if the file contains timestamp information
+   * @return true if it contains timestamp
+   */
+  bool has_timestamp() override;
+  
+  /**
+   * Close the reader object
+   */
+  void close() override;
+  
+  /**
+  * Advance timestamp column
+  */
+  void nextTimestamp();
+  
+  /**
+  * Advance lobgitude column
+  */
+  void nextLon();
+
+  /**
+  * Advance latitude column
+  */
+  void nextLat();
+
+  /**
+  * Advance trip column
+  */
+  void nextTrip();
+
+  /**
+  * Advance all columns
+  */
+  void nextRow();
+
+  /**
+  * Retrieve current row data as a struct
+  */
+  TripsRow getCurrentRow();
+
+
+private:
+  int idx;
+  int n;
+  int curTripId;
+
+  std::shared_ptr<arrow::Table> table;
+
+  int timestampChunks;
+  int curTimestampChunk;
+  int timestampIdx;
+  std::shared_ptr<arrow::ChunkedArray> timestamp_col;
+  std::shared_ptr<arrow::DoubleArray> timestamp_chunk;
+
+  int lonChunks;
+  int curLonChunk;
+  int lonIdx;
+  std::shared_ptr<arrow::ChunkedArray> lon_col;
+  std::shared_ptr<arrow::DoubleArray> lon_chunk;
+
+  int latChunks;
+  int curLatChunk;
+  int latIdx;
+  std::shared_ptr<arrow::ChunkedArray> lat_col;
+  std::shared_ptr<arrow::DoubleArray> lat_chunk;
+
+  int tripChunks;
+  int curTripChunk;
+  int tripIdx;
+  std::shared_ptr<arrow::ChunkedArray> trip_col;
+  std::shared_ptr<arrow::Int64Array> trip_chunk;
+
+}; // ParquetReader
+
+
+
+/**
  * %GPSReader class, a wrapper makes it easier to read data from
  * a file by specifying GPSConfig as input.
  */
