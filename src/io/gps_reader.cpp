@@ -340,11 +340,15 @@ arrow::Result<std::unique_ptr<parquet::arrow::FileReader>> OpenReader(const std:
   arrow::fs::LocalFileSystem file_system;
   ARROW_ASSIGN_OR_RAISE(auto input, file_system.OpenInputFile(e_filename));
 
+  std::cout << "open1" << std::endl;
+
   parquet::ArrowReaderProperties arrow_reader_properties =
       parquet::default_arrow_reader_properties();
 
   arrow_reader_properties.set_pre_buffer(true);
   arrow_reader_properties.set_use_threads(true);
+
+  std::cout << "open2" << std::endl;
 
   parquet::ReaderProperties reader_properties =
       parquet::default_reader_properties();
@@ -356,47 +360,64 @@ arrow::Result<std::unique_ptr<parquet::arrow::FileReader>> OpenReader(const std:
   ARROW_RETURN_NOT_OK(reader_builder.Open(std::move(input), reader_properties));
   ARROW_RETURN_NOT_OK(reader_builder.Build(&arrow_reader));
 
+  std::cout << "open3" << std::endl;
+
   return arrow_reader;
 }
 
 
 ParquetReader::ParquetReader(const std::string &e_filename) {
+  std::cout << "debug1" << std::endl;
 
   // open file for reading
   init(e_filename);
+
+  std::cout << "debug2" << std::endl;
 
   // initialize some stuff
   idx = 0;
   n = table->num_rows();
   curTripId = -1;
 
+  std::cout << "debug3" << std::endl;
+
+  std::cout << table->schema()->ToString() << std::endl;
+
   // get timestamp column deets
   timestampIdx      = 0;
   timestamp_col     = table->column(0);
   timestampChunks   = timestamp_col->num_chunks();
   curTimestampChunk = 0;
-  timestamp_chunk   = std::dynamic_pointer_cast<arrow::DoubleArray>(timestamp_col->chunk(0));
+  timestamp_chunk   = std::dynamic_pointer_cast<arrow::TimestampArray>(timestamp_col->chunk(0));
+
+  std::cout << "debug4" << std::endl;
 
   // get lon column deets
   lonIdx      = 0;
-  lon_col     = table->column(1);
+  lon_col     = table->column(2);
   lonChunks   = lon_col->num_chunks();
   curLonChunk = 0;
   lon_chunk   = std::dynamic_pointer_cast<arrow::DoubleArray>(lon_col->chunk(0));
 
+  std::cout << "debug5" << std::endl;
+
   // get lat column deets
   latIdx      = 0;
-  lat_col     = table->column(2);
+  lat_col     = table->column(1);
   latChunks   = lat_col->num_chunks();
   curLatChunk = 0;
   lat_chunk   = std::dynamic_pointer_cast<arrow::DoubleArray>(lat_col->chunk(0));
+
+  std::cout << "debug6" << std::endl;
 
   // get trip column deets
   tripIdx      = 0;
   trip_col     = table->column(3);
   tripChunks   = trip_col->num_chunks();
   curTripChunk = 0;
-  trip_chunk   = std::dynamic_pointer_cast<arrow::Int64Array>(trip_col->chunk(0));
+  trip_chunk   = std::dynamic_pointer_cast<arrow::Int32Array>(trip_col->chunk(0));
+
+  std::cout << "debug7" << std::endl;
 }
 
 arrow::Status ParquetReader::init(const std::string &e_filename) {
@@ -440,7 +461,7 @@ void ParquetReader::nextTimestamp() {
     // advance to next chunk
     timestampIdx = 0;
     curTimestampChunk = curTimestampChunk + 1;
-    timestamp_chunk = std::dynamic_pointer_cast<arrow::DoubleArray>(timestamp_col->chunk(curTimestampChunk));
+    timestamp_chunk = std::dynamic_pointer_cast<arrow::TimestampArray>(timestamp_col->chunk(curTimestampChunk));
   }
 }
 
@@ -470,7 +491,7 @@ void ParquetReader::nextTrip() {
     // advance to next chunk
     tripIdx = 0;
     curTripChunk = curTripChunk + 1;
-    trip_chunk = std::dynamic_pointer_cast<arrow::Int64Array>(trip_col->chunk(curTripChunk));
+    trip_chunk = std::dynamic_pointer_cast<arrow::Int32Array>(trip_col->chunk(curTripChunk));
   }
 }
 
@@ -479,17 +500,32 @@ bool ParquetReader::has_next_trajectory() {
 }
 
 Trajectory ParquetReader::read_next_trajectory() {
+  //std::cout << "rn1" << std::endl;
 
   // initialize some vars
   FMM::CORE::LineString geom;
   std::vector<double> timestamps;
 
+  //std::cout << "rn2" << std::endl;
+
+  //std::cout << lon_chunk->length() << std::endl;
+
   // first leg
+  //std::cout << tripIdx << std::endl;
+  //std::cout << trip_chunk->length() << std::endl;
   curTripId = trip_chunk->Value(tripIdx);
+  //std::cout << "rn2a" << std::endl;
+  std::cout << timestamp_chunk->Value(timestampIdx) << std::endl;
   timestamps.push_back(timestamp_chunk->Value(timestampIdx));
+  //std::cout << "rn2b" << std::endl;
   double x = lon_chunk->Value(lonIdx);
+  //std::cout << "rn2c" << std::endl;
   double y = lat_chunk->Value(latIdx);
+  //std::cout << "rn2d" << std::endl;
   geom.add_point(x, y);
+  //std::cout << "rn2e" << std::endl;
+
+  //std::cout << "rn3" << std::endl;
 
   int curTripLength = 1;
   
@@ -498,16 +534,22 @@ Trajectory ParquetReader::read_next_trajectory() {
     TripsRow data = getCurrentRow();
     nextRow();
 
+    //std::cout << "rn4" << std::endl;
+
     // break if change in trip ID
     if(curTripId != data.trip) { break; }
+
+    //std::cout << "rn5" << std::endl;
 
     // append current row to trip geom
     timestamps.push_back(data.timestamp);
     geom.add_point(data.lon, data.lat);
     curTripLength = curTripLength + 1;
+
+    //std::cout << "rn6" << std::endl;
   }
 
-return Trajectory{curTripId, geom, timestamps};
+  return Trajectory{curTripId, geom, timestamps};
 }
 
 // assume true for trips files
@@ -535,6 +577,11 @@ GPSReader::GPSReader(const FMM::CONFIG::GPSConfig &config) {
     SPDLOG_INFO("GPS data in point CSV format");
     reader = std::make_shared<CSVPointReader>
                (config.file, config.id, config.x, config.y, config.timestamp);
+  } else if (mode == 3) {
+    SPDLOG_INFO("GPS data in parquet format");
+    reader = std::make_shared<ParquetReader>
+               (config.file);
+
   } else {
     std::string message = "Unrecognized GPS format";
     SPDLOG_CRITICAL(message);

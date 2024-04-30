@@ -339,7 +339,7 @@ private:
   int curTimestampChunk;
   int timestampIdx;
   std::shared_ptr<arrow::ChunkedArray> timestamp_col;
-  std::shared_ptr<arrow::DoubleArray> timestamp_chunk;
+  std::shared_ptr<arrow::TimestampArray> timestamp_chunk;
 
   int lonChunks;
   int curLonChunk;
@@ -357,7 +357,7 @@ private:
   int curTripChunk;
   int tripIdx;
   std::shared_ptr<arrow::ChunkedArray> trip_col;
-  std::shared_ptr<arrow::Int64Array> trip_chunk;
+  std::shared_ptr<arrow::Int32Array> trip_chunk;
 
 }; // ParquetReader
 

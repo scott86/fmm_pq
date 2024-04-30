@@ -106,6 +106,8 @@ int FMM::CONFIG::GPSConfig::get_gps_format() const {
     }
   } else if (fn_extension == "gpkg" || fn_extension == "shp") {
     return 0;
+  } else if (fn_extension == "parquet") {
+    return 3;  // why isn't this an enum
   } else {
     SPDLOG_CRITICAL("GPS file extension {} unknown",fn_extension);
     return -1;
